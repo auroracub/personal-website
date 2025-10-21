@@ -6,30 +6,45 @@ import * as Three from "three";
 import * as Addons from "three/addons";
 import * as Tween from "@tweenjs/tween.js"
 import { Planet } from "./planet"
+import GSAP from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { SplitText } from "gsap/SplitText";
+import Lenis from "lenis";
 
 ////////////////////////////////
 // Globals                    //
 ////////////////////////////////
 
 const DEBUG_MODE = false && process.env.NODE_ENV !== "production";
-const labelOffset = 1.25;
+const labelOffset = 0.4;
 
 let isWindowLoaded = false;
-let canvas = <HTMLCanvasElement>document.querySelector("canvas.threejs");
+let canvas = <HTMLCanvasElement>document.querySelector("canvas.canvas");
+// let width = window.innerWidth, height = window.innerHeight;
+let rect: DOMRect;
 let scene: Three.Scene, camera: Three.PerspectiveCamera, renderer: Three.WebGLRenderer, clock: Three.Clock, controls: Addons.OrbitControls;
 let ambientLight: Three.AmbientLight, directionalLight: Three.DirectionalLight;
 let earth: Planet, moon: Planet;
 let labels: Array<Three.Object3D> = [];
 
 let previousTime = 0.0;
-let cursor = new Three.Vector2();
-let controlScale = 1.0;
+let cursorPosition = new Three.Vector2();
+// let controlScale = 1.0;
+let lastClickPosition = new Three.Vector2();
 
 const fontLoader = new Addons.FontLoader();
 const ttfLoader = new Addons.TTFLoader();
 const textureLoader = new Three.TextureLoader();
 const controlsTweenGroup = new Tween.Group();
 // const rgbeLoader = new RGBELoader();
+
+let isHome = true;
+let isFramed = true;
+let homeObject: Three.Object3D
+let currentObject: Three.Object3D;
+let frameWidth = Math.min(window.innerWidth, window.innerHeight);
+let framePercentage = 0.90;
+let frameDistance = 1.0;
 
 const FONTS = {
   interThin: "fonts/Inter/static/Inter_24pt-Thin.ttf",
@@ -54,18 +69,12 @@ const FONTS = {
 }
 
 ////////////////////////////////
-// Window Events              //
+// DOM/Window Events          //
 ////////////////////////////////
 
-// Loading transition
-window.addEventListener("load", function() {
-    isWindowLoaded = true;
-});
-
-// Canvas resizing
-window.addEventListener("resize", function() {
-    const width = canvas === null ? this.window.innerWidth : canvas.clientWidth;
-    const height = canvas === null ? this.window.innerHeight : canvas.clientHeight;
+function recalculateSize() {
+    const width = canvas === null ? window.innerWidth : canvas.clientWidth;
+    const height = canvas === null ? window.innerHeight : canvas.clientHeight;
     
     // resize only when necessary
     if (canvas.width !== width || canvas.height !== height) {
@@ -76,9 +85,61 @@ window.addEventListener("resize", function() {
         if (aspectRatio != camera.aspect) {
             camera.aspect = aspectRatio;
             camera.updateProjectionMatrix();
+            frameWidth = calculateFrameWidth();
+            frameDistance = calculateFrameDistance(currentObject);
         }
+
+        rect = renderer.domElement.getBoundingClientRect();
     };
+}
+
+// Loading transition
+window.addEventListener("load", function() {
+    isWindowLoaded = true;
 });
+
+// Canvas resizing
+window.addEventListener("resize", recalculateSize);
+
+document.addEventListener("DOMContentLoaded", () => {
+    GSAP.registerPlugin(ScrollTrigger, SplitText);
+
+    const lenis = new Lenis();
+    lenis.on("scroll", ScrollTrigger.update);
+    GSAP.ticker.add((time) => lenis.raf(time * 1000));
+    GSAP.ticker.lagSmoothing(0);
+
+    // const header1Split = new SplitText(".header-1 h1", {
+    //     type: "chars",
+    //     charsClass: "char"
+    // });
+
+    // header1Split.chars.forEach(
+    //     (char) => (char.innerHTML = `<span>${char.innerHTML}</span>`)
+    // )
+
+    // const animOptions = { duration: 1.0, ease: "power3.out", stagger: 0.025 };
+
+    // ScrollTrigger.create({
+    //     trigger: ".overview",
+    //     start: "75% bottom",
+    //     onEnter: () =>
+    //         GSAP.to(".header-1 h1 .char > span", {
+    //             y: "0%",
+    //             duration: animOptions.duration,
+    //             ease: animOptions.ease,
+    //             stagger: animOptions.stagger
+    //         }),
+    //     onLeaveBack: () =>
+    //         GSAP.to(".header-1 h1 .char > span", {
+    //             y: "100%",
+    //             duration: animOptions.duration,
+    //             ease: animOptions.ease,
+    //             stagger: animOptions.stagger
+    //         })
+    // });
+})
+
 
 ////////////////////////////////
 // Input Events               //
@@ -91,13 +152,18 @@ document.body.onmousedown = (e) => {
 
 // Mouse Move
 document.addEventListener("mousemove", (e) => {
-    cursor.set(e.clientX, e.clientY);
+    cursorPosition.set(e.clientX, e.clientY);
 });
 
 // Click
 document.addEventListener("click", (e) => {
-    let screenPos = new Three.Vector2((e.clientX / window.innerWidth) * 2.0 - 1.0, ((window.innerHeight - e.clientY) / window.innerHeight) * 2.0 - 1.0)
-    const raycaster = new Three.Raycaster(); raycaster.setFromCamera(screenPos, camera);
+    if (lastClickPosition.distanceToSquared(cursorPosition) > 0.05) isFramed = false;
+
+    const screenPosition = new Three.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2.0 - 1.0,
+        -((e.clientY - rect.top) / rect.height) * 2.0 + 1.0
+    );
+    const raycaster = new Three.Raycaster(); raycaster.setFromCamera(screenPosition, camera);
     const intersections = raycaster.intersectObjects([ earth.mesh, moon.mesh ]);
 
     // Intersection found
@@ -111,6 +177,8 @@ document.addEventListener("click", (e) => {
             animateControlTarget(intersection.object);
         }
     }
+
+    lastClickPosition.copy(cursorPosition);
 });
 
 // const _VS = `
@@ -135,7 +203,8 @@ document.addEventListener("click", (e) => {
     camera = new Three.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100.0);
     // camera.position.y = 0.125;
     // camera.position.z = 4.0;
-    camera.position.set(0.5, -2.5, 1.0);
+    // camera.position.set(0.5, -2.5, 1.0);
+    // camera.position.set(0.0, 0.0, 0.0);
 
     ////////////////////////////////
     // Renderer                   //
@@ -144,14 +213,17 @@ document.addEventListener("click", (e) => {
     renderer = new Three.WebGLRenderer({
         canvas: canvas,
         antialias: true,
-        // toneMapping: Three.ACESFilmicToneMapping,
-        // toneMapping: THREE.NeutralToneMapping,
-        // toneMappingExposure: 0.5,
+        alpha: true
     });
-
-    const maxPixelRatio = Math.min(window.devicePixelRatio, 2);
-    renderer.setPixelRatio(maxPixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x000000, 0.0);
+    // renderer.setSize(window.innerWidth, window.innerHeight);
+    // const maxPixelRatio = Math.min(window.devicePixelRatio, 2);
+    // renderer.setPixelRatio(maxPixelRatio);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = Three.PCFSoftShadowMap;
+    renderer.outputColorSpace = Three.LinearSRGBColorSpace;
+    renderer.toneMapping = Three.NoToneMapping; // Other options: THREE.NeutralToneMapping, Three.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.0;
 
     clock = new Three.Clock();
 
@@ -161,9 +233,13 @@ document.addEventListener("click", (e) => {
 
     controls = new Addons.OrbitControls(camera, canvas);
     controls.enableDamping = true;
-    controls.minPolarAngle = 0.25;
-    controls.maxPolarAngle = 1.8;
+    // controls.minPolarAngle = 0.25;
+    // controls.maxPolarAngle = 1.8;
+    controls.minPolarAngle = Math.PI * 0.5;
+    controls.maxPolarAngle = Math.PI * 0.5;
     controls.enablePan = false;
+    controls.enableZoom = false;
+    controls.enableRotate = false;
 
     ////////////////////////////////
     // Scene                      //
@@ -178,8 +254,12 @@ document.addEventListener("click", (e) => {
     }
 
     // Create Light
-    ambientLight = new Three.AmbientLight(new Three.Color(0xad5d02), 1.0);
-    directionalLight = new Three.DirectionalLight(new Three.Color(0xffe8a8), 2.0);
+    ambientLight = new Three.AmbientLight(new Three.Color(0xffffff), 0.7); // 0xad5d02
+    directionalLight = new Three.DirectionalLight(new Three.Color(0xffffff), 1.0); // 0xffe8a8
+    directionalLight.castShadow = true;
+    directionalLight.shadow.bias = -0.001;
+    directionalLight.shadow.mapSize.width = 1024;
+    directionalLight.shadow.mapSize.height = 1024;
     scene.add(ambientLight);
     scene.add(directionalLight);
 
@@ -237,7 +317,7 @@ document.addEventListener("click", (e) => {
     });
     moon = new Planet(new Three.SphereGeometry(1.0, 24, 24), moonMaterial)
         .addToScene(scene)
-    moon.mesh.position.set(earth.mesh.position.x + 1.5, earth.mesh.position.y + 4.5, earth.mesh.position.z - 8.0);
+    moon.mesh.position.set(earth.mesh.position.x - 6.0, earth.mesh.position.y + 5.0, earth.mesh.position.z + 16.0);
     moon.mesh.scale.setScalar(moonScale);
 
     // Create particles
@@ -273,30 +353,33 @@ document.addEventListener("click", (e) => {
     // scene.background = envMap;
     // scene.environment = envMap;
 
-    // Set Control Target
-    const initialTargetPosition = getTargetPosition(earth.mesh, labelOffset);
-    controls.target = initialTargetPosition;
-    camera.position.add(initialTargetPosition);
-    camera.lookAt(initialTargetPosition);
-    controls.update();
-    setControlScale(earthScale);
+    // Set home object
+    homeObject = earth.mesh
 
-    function getTargetPosition(object: Three.Object3D, offset: number) {
-        const targetPosition = object.position.clone();
-        targetPosition.y += object.scale.y * (Math.sign(offset) * 0.5 + offset);
-        return targetPosition;
-    }
+    // Set Control Target
+    const initialTargetPosition = setControlTarget(earth.mesh, labelOffset);
+
+    // setControlScale(homeObject.scale.x);
+    // camera.position.set(0.0, 0.0, calculateFrameDistance(homeObject));
+    setControlFrameDistance(calculateFrameDistance(homeObject));
+
+    // const initialTargetPosition = getTargetPosition(earth.mesh, labelOffset);
+    // controls.target = initialTargetPosition;
+    // camera.position.add(initialTargetPosition);
+    // camera.lookAt(initialTargetPosition);
+    // controls.update();
+    // setControlScale(earthScale);
 
     // Create Text
-    ttfLoader.load(FONTS.interBold, (json) => {
-        const interBoldFont = fontLoader.parse(json);
-        const baseFontSize = 0.25;
-        const baseFontDepth = 0.05;
+    ttfLoader.load(FONTS.interThin, (json) => {
+        const interThinFont = fontLoader.parse(json);
+        const baseFontSize = 0.15;
+        const baseFontDepth = 0.03;
 
         // Earth Label
         {
             const textGeometry = new Addons.TextGeometry("Home", {
-                font: interBoldFont,
+                font: interThinFont,
                 size: baseFontSize * earthScale,
                 depth: baseFontDepth * earthScale,
                 curveSegments: 2,
@@ -308,7 +391,7 @@ document.addEventListener("click", (e) => {
             textGeometry.boundingBox?.getCenter(centerOffset);
             textGeometry.translate(-centerOffset.x, -centerOffset.y, -centerOffset.z);
 
-            const textMaterial = new Three.MeshBasicMaterial({ color: 0xffffff });
+            const textMaterial = new Three.MeshBasicMaterial({ color: 0x000000 });
             const textMesh = new Three.Mesh(textGeometry, textMaterial);
 
             scene.add(textMesh);
@@ -321,7 +404,7 @@ document.addEventListener("click", (e) => {
         // Moon Label
         {
             const textGeometry = new Addons.TextGeometry("About", {
-                font: interBoldFont,
+                font: interThinFont,
                 size: baseFontSize * moonScale,
                 depth: baseFontDepth * moonScale,
                 curveSegments: 2,
@@ -333,7 +416,7 @@ document.addEventListener("click", (e) => {
             textGeometry.boundingBox?.getCenter(centerOffset);
             textGeometry.translate(-centerOffset.x, -centerOffset.y, -centerOffset.z);
 
-            const textMaterial = new Three.MeshBasicMaterial({ color: 0xffffff });
+            const textMaterial = new Three.MeshBasicMaterial({ color: 0x000000 });
             const textMesh = new Three.Mesh(textGeometry, textMaterial);
 
             scene.add(textMesh);
@@ -371,6 +454,10 @@ function runUpdateLoop() {
         label.lookAt(labelTrackPosition);
     });
 
+    if (!isTraveling) {
+        setControlFrameDistance(calculateFrameDistance(currentObject));
+    }
+
     ////////////////////////////////
     // End Update Logic           //
     ////////////////////////////////
@@ -385,41 +472,130 @@ function runUpdateLoop() {
 // Controls                   //
 ////////////////////////////////
 
-function setControlScale(scale: number) {
-    controlScale = scale;
-    // controls.minDistance = 1.5 * scale;
-    // controls.maxDistance = 12.0 * scale;
-    controls.minDistance = 3.0 * scale;
-    controls.maxDistance = controls.minDistance;
-    // controls.maxTargetRadius = 10.0 * scale;
+function calculateFrameWidth() {
+    // return Math.min(Math.min(width, height), window.innerWidth * 0.5);
+    return Math.min(rect.width, rect.height);
+}
+
+function calculateFrameDistance(object: Three.Object3D): number {
+    const renderWidthPixels = renderer.getSize(new Three.Vector2).x;
+    const desiredWidthPixels = frameWidth * framePercentage;
+    const desiredWidthNDC = (desiredWidthPixels / renderWidthPixels) * 2.0;
+    // Get the bounding box in world coordinates
+    // const boundingBox = new Three.Box3().setFromObject(object);
+
+    // let bbMin = boundingBox.min.clone();
+    // let bbMax = boundingBox.max.clone();
+
+    // Convert world coordinates to normalized device coordinates
+    // bbMin.project(camera);
+    // bbMax.project(camera);
+
+    // console.log(frameWidth);
+    
+    // const angle = Math.atan(desiredWidthOnScreen / camera.near);
+    // console.log(desiredWidthOnScreen * 0.5 / camera.near);
+    // console.log(renderer.getSize(new Three.Vector2()).x);
+    // Replace with bounding box later?
+    // return (1.0 / Math.atan(camera.fov)) * (object.scale.x);
+
+    return 2.0 * object.scale.x * desiredWidthNDC; // Remove object scale to disable relative scaling for all planets
+}
+
+// function setControlScale(scale: number) {
+//     controlScale = scale;
+//     // controls.minDistance = 3.0 * scale;
+//     // controls.maxDistance = controls.minDistance;
+
+//     // controls.minDistance = 1.5 * scale;
+//     // controls.maxDistance = 12.0 * scale;
+//     // controls.maxTargetRadius = 10.0 * scale;
+// }
+
+function setControlTarget(targetObject: Three.Object3D, verticalOffset: number): Three.Vector3 {
+    const targetPosition = getTargetPosition(targetObject, verticalOffset);
+    controls.target = targetPosition;
+    //camera.position.add(targetPosition);
+    camera.lookAt(targetPosition);
+    controls.update();
+    // setControlScale(targetObject.scale.y);
+    currentObject = targetObject;
+
+    return targetPosition;
+
+    // const targetPosition = targetObject.position.clone();
+    // controls.target = targetPosition;
+    // camera.lookAt(targetPosition);
+    // controls.update();
+    // // setControlScale(targetObject.scale.y);
+    // currentObject = targetObject;
+
+    // return targetPosition;
+}
+
+function setControlFrameDistance(distance: number) {
+    frameDistance = distance;
+    controls.minDistance = distance;
+    controls.maxDistance = distance;
+}
+
+function getTargetPosition(object: Three.Object3D, offset: number): Three.Vector3 {
+    const targetPosition = object.position.clone();
+    targetPosition.y += object.scale.y * (Math.sign(offset) * 0.5 + offset);
+    return targetPosition;
+    // return object.position.clone();
 }
 
 ////////////////////////////////
 // Scene-specific Logic       //
 ////////////////////////////////
 
-function animateControlTarget(object: Three.Object3D) {
-    const oldScale = controlScale;
-    const newScale = object.scale.y;
-    const targetPosition = object.position.clone();
-    targetPosition.y += newScale * (0.5 + labelOffset);
+let isTraveling = false;
+
+function animateControlTarget(object: Three.Object3D, duration: number = 1500) {
+    // const oldScale = controlScale;
+    const oldFrameDistance = frameDistance;
+    // const newScale = object.scale.y;
+    const newFrameDistance = calculateFrameDistance(object);
+    const targetPosition = getTargetPosition(object, labelOffset);
+    // targetPosition.y += newScale * (0.5 + labelOffset);
     controlsTweenGroup.add(new Tween.Tween(controls.target)
-        .to(targetPosition, 1500) // Target position and duration in milliseconds
+        .to(targetPosition, duration) // Target position and duration in milliseconds
         .easing(Tween.Easing.Quadratic.Out) // Optional easing function for smoother animation
         .onStart(() => {
             // controls.enabled = false;
+            isTraveling = true;
         })
         .onUpdate((value: Three.Vector3, alpha: number) => {
             // camera.lookAt(controls.target);
             controls.target = value;
-            setControlScale(Three.MathUtils.lerp(oldScale, newScale, alpha));
+            // setControlScale(Three.MathUtils.lerp(oldScale, newScale, alpha));
+            setControlFrameDistance(Three.MathUtils.lerp(oldFrameDistance, newFrameDistance, alpha));
         })
         .onComplete(() => {
             // controls.enabled = true;
+            isHome = object === homeObject;
+            currentObject = object;
+            console.log("isHome is " + isHome);
+            isTraveling = false;
         })
         .start())
 }
 
+function onFrameClicked() {
+    console.log("Framing scene...");
+}
+
+function onHomeClicked() {
+    console.log("Going home...");
+    animateControlTarget(homeObject);
+}
+
+////////////////////////////////
+// Render                     //
+////////////////////////////////
+
+recalculateSize();
 runUpdateLoop();
 
 ////////////////////////////////

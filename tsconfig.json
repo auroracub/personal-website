@@ -12,7 +12,7 @@
     // See also https://aka.ms/tsconfig/module
     // "module": "nodenext",
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "target": "esnext",
     // "types": [],
     // For nodejs:

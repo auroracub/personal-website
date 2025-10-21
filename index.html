@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
     <head>
         <meta charset="utf-8">
         <title>AJ's Site</title>
-        <link rel="stylesheet" href="./style.css" content-type="text/css">
+        <link rel="icon" type="image/x-icon" href="static/images/favicon_placeholder.png">
+        <link rel="stylesheet" href="styles/style.css" content-type="text/css">
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <!--
@@ -12,8 +13,31 @@
         -->
     </head>
     <body>
-        <canvas class="threejs"></canvas>
+        <section class="intro">
+            <h1>Intro</h1>
+            <h2>Welcome to the intro</h2>
+        </section>
 
+        <section class="planets">
+            <h1>Planets</h1>
+            <h2>Welcome to the planets</h2>
+            <div class="canvas-container"> <!-- </div>class="circular-mask"> -->
+                <canvas class="canvas"></canvas>
+                <div class="canvas-overlay">
+                    <button type="button" class="canvas-button" id="frame-button">
+                        <img src="images/ui/frame_icon_placeholder.png" class="button-icon">
+                    </button>
+                    <button type="button" class="canvas-button" id="home-button">
+                        <img src="images/ui/home_icon_placeholder.png" class="button-icon">
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section class="outro">
+            <h1>Outro</h1>
+            <h2>Welcome to the outro</h2>
+        </section>
         <!--
         <div id="loader" style="visibility: visible">
             <div class="spinner"></div>
@@ -75,6 +99,6 @@
 		</script>
         -->
         
-        <script type="module" src="./src/app.ts" content-type="application/javascript"></script>
+        <script type="module" src="src/app.ts" content-type="application/javascript"></script>
     </body>
 </html>
